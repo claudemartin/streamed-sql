@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -21,8 +22,7 @@ import java.util.stream.StreamSupport;
  * <p>
  * Always use <code>try-with-resource</code>, so the resources get closed as
  * soon as possible. If you prefer to be sloppy you should at least call
- * {@link #setAutoClosePhantoms(boolean) setAutoClosePhantoms(true)} before
- * creating any streams.
+ * {@link #getAutoClosePhantoms()} before creating any streams.
  * 
  * @author Claude Martin
  *
@@ -37,14 +37,19 @@ public final class StreamedSQL {
    */
   private static volatile Cleaner cleaner = null;
 
-  private StreamedSQL() {
-    this(false);
+  private final boolean autoClose;
+  /**
+   * Default connection.
+   */
+  private final Optional<Connection> defConn;
+
+  private StreamedSQL(final Connection conn, final boolean autoClose) {
+    this.defConn = Optional.ofNullable(conn);
+    this.autoClose = autoClose;
   }
 
-  private volatile boolean autoClose = false;
-
-  private StreamedSQL(final boolean autoClose) {
-    this.autoClose = autoClose;
+  private Connection getDefConn() {
+    return this.defConn.orElseThrow(() -> new IllegalStateException("No default connection available."));
   }
 
   /**
@@ -53,23 +58,26 @@ public final class StreamedSQL {
    * @return a new {@link StreamedSQL}
    */
   public static StreamedSQL create() {
-    return new StreamedSQL();
+    return new StreamedSQL(null, false);
   }
 
   /**
-   * Returns a new {@link StreamedSQL} with {@link #setAutoClosePhantoms(boolean)
-   * auto-close} enabled.
+   * Returns a new {@link StreamedSQL} with a given default connection (could be
+   * null) and {@link #setAutoClosePhantoms(boolean) auto-close} enabled or
+   * disabled.
    * 
+   * @param conn
+   *          default connection (can be null)
    * @param autoClose
    *          should phantom references be closed automatically?
    * @return a new {@link StreamedSQL}
    */
-  public static StreamedSQL create(final boolean autoClose) {
-    return new StreamedSQL(autoClose);
+  public static StreamedSQL create(final Connection conn, final boolean autoClose) {
+    return new StreamedSQL(conn, autoClose);
   }
 
   /**
-   * You can set this to true, so that streams created in this class will
+   * You can enable this at creation, so that streams created in this class will
    * automatically close, even when <code>try-with-resource</code> is not used.
    * 
    * <p>
@@ -79,15 +87,6 @@ public final class StreamedSQL {
    * <p>
    * If set to <code>true</code>, all phantom reachable streams will be closed,
    * which also closes the used sql statement.
-   */
-  public void setAutoClosePhantoms(final boolean value) {
-    autoClose = value;
-  }
-
-  /**
-   * Are the used statements automatically closed?
-   * 
-   * @see #setAutoClosePhantoms(boolean)
    */
   public boolean getAutoClosePhantoms() {
     return autoClose;
@@ -129,6 +128,22 @@ public final class StreamedSQL {
   }
 
   /**
+   * Creates a prepared statement using the default connection, which allows to
+   * get the row count. This might result in better performance.
+   * 
+   * @param query
+   *          the query statement
+   * @return a prepared statement
+   * @throws SQLException
+   *           if the query is not valid or the connection fails
+   * @throws IllegalStateException
+   *           if the default connection is not set
+   */
+  public PreparedStatement prepareStatement(final String query) throws SQLException, IllegalStateException {
+    return prepareStatement(this.defConn.orElseThrow(() -> new IllegalStateException()), query);
+  }
+
+  /**
    * Stream from a query string. The connection has to be open already and it will
    * not be closed.
    * 
@@ -152,6 +167,30 @@ public final class StreamedSQL {
       throws SQLException {
     Objects.requireNonNull(conn, "conn");
     return stream(prepareStatement(conn, query), mapper);
+  }
+
+  /**
+   * Stream from a query string using the default connection. The connection has
+   * to be open already and it will not be closed.
+   * 
+   * <p>
+   * Note that the stream has to be closed. Use <code>try-with-resource</code> to
+   * make sure the stream does not remain open. The given connection will not be
+   * closed.
+   * 
+   * @param conn
+   *          the connection
+   * @param query
+   *          the query statement
+   * @param mapper
+   *          maps the {@link ResultSet} to some object
+   * @return a parallel stream
+   * @throws SQLException
+   *           Thrown when the <i>query</i> can't be executed. Consider handling
+   *           {@link StreamedSQLException} as well.
+   */
+  public <T> Stream<T> stream(final String query, final ResultSetMapper<T> mapper) throws SQLException {
+    return stream(prepareStatement(query), mapper);
   }
 
   /**

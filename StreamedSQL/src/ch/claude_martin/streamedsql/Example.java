@@ -27,8 +27,8 @@ import java.util.stream.Stream;
 public class Example {
   public static void main(String[] args) throws SQLException, InterruptedException {
     final var conn = initDB();
-    final var strsql = StreamedSQL.create();
-    try (Stream<Foo> stream = strsql.stream(conn, "SELECT * FROM FOO WHERE NAME LIKE 'L%'", Foo::of)) {
+    final var strsql = StreamedSQL.create(conn, false);
+    try (Stream<Foo> stream = strsql.stream("SELECT * FROM FOO WHERE NAME LIKE 'L%'", Foo::of)) {
       stream.filter(f -> f.getId() % 31 == 6).sorted(Comparator.comparing(Foo::getName)).forEach(System.out::println);
     }
     System.out.println("THE END");
