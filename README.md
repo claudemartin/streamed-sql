@@ -11,3 +11,6 @@ try (Stream<Foo> stream = StreamedSQL.stream(conn, "SELECT * FROM FOO", Foo::new
 ```
 
 You get a parallel stream and you can just map the data to any POJO and then process them in parallel. 
+
+This is based on an idea I found on Stackoverflow: https://stackoverflow.com/a/32232173/2123025
+
