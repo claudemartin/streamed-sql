@@ -1,20 +1,108 @@
 package ch.claude_martin.streamdsql;
 
-import java.sql.*;
-import java.util.stream.*;
+import java.lang.ref.Cleaner;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Objects;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
- * Utility class to easily create a Stream from an SQL statement.
+ * StreamedSQL allows you to easily create a parallel {@link Stream} from an SQL
+ * statement (JDBC).
  * 
  * <p>
  * {@link java.util.Spliterator#tryAdvance Spliterator.tryAdvance} can't throw
  * SQLException, so also catch {@link StreamedSQLException} to make sure you get
  * them all.
  * 
+ * <p>
+ * Always use <code>try-with-resource</code>, so the resources get closed as
+ * soon as possible. If you prefer to be sloppy you should at least call
+ * {@link #setAutoClosePhantoms(boolean) setAutoClosePhantoms(true)} before
+ * creating any streams.
+ * 
  * @author Claude Martin
  *
  */
 public final class StreamedSQL {
+  /**
+   * The cleaner used for auto-closed statemens.
+   * <p>
+   * All use the same Cleaner. But nut every instance of {@link StreamedSQL} has
+   * this feature enabled. It's a singleton that is created the first time one is
+   * used.
+   */
+  private static volatile Cleaner cleaner = null;
+
+  private StreamedSQL() {
+    this(false);
+  }
+
+  private volatile boolean autoClose = false;
+
+  private StreamedSQL(final boolean autoClose) {
+    this.autoClose = autoClose;
+  }
+
+  /**
+   * Returns a new {@link StreamedSQL}.
+   * 
+   * @return a new {@link StreamedSQL}
+   */
+  public static StreamedSQL create() {
+    return new StreamedSQL();
+  }
+
+  /**
+   * Returns a new {@link StreamedSQL} with {@link #setAutoClosePhantoms(boolean)
+   * auto-close} enabled.
+   * 
+   * @param autoClose
+   *          should phantom references be closed automatically?
+   * @return a new {@link StreamedSQL}
+   */
+  public static StreamedSQL create(final boolean autoClose) {
+    return new StreamedSQL(autoClose);
+  }
+
+  /**
+   * You can set this to true, so that streams created in this class will
+   * automatically close, even when <code>try-with-resource</code> is not used.
+   * 
+   * <p>
+   * Note that it is recommended to properly close all streams using
+   * <code>try-with-resource</code>.
+   * 
+   * <p>
+   * If set to <code>true</code>, all phantom reachable streams will be closed,
+   * which also closes the used sql statement.
+   */
+  public void setAutoClosePhantoms(final boolean value) {
+    autoClose = value;
+  }
+
+  /**
+   * Are the used statements automatically closed?
+   * 
+   * @see #setAutoClosePhantoms(boolean)
+   */
+  public boolean getAutoClosePhantoms() {
+    return autoClose;
+  }
+
+  /** Returns the singleton {@link Cleaner}. Creates it if necessary. */
+  private static Cleaner getCleaner() {
+    if (cleaner == null) // cleaner is volatile, so this actually works.
+      synchronized (StreamedSQL.class) {
+        if (cleaner == null)
+          return cleaner = Cleaner.create();
+      }
+    return cleaner;
+  }
+
   /**
    * Creates a prepared statement, which allows to get the row count. This might
    * result in better performance.
@@ -34,9 +122,9 @@ public final class StreamedSQL {
    * @return a prepared statement
    * @throws SQLException
    */
-  public static PreparedStatement prepareStatement(Connection conn, String query) throws SQLException {
-    PreparedStatement stmt = conn.prepareStatement(query, ResultSet.TYPE_SCROLL_INSENSITIVE,
-        ResultSet.CONCUR_READ_ONLY);
+  public PreparedStatement prepareStatement(final Connection conn, final String query) throws SQLException {
+    final var stmt = Objects.requireNonNull(conn, "conn").prepareStatement(Objects.requireNonNull(query, "query"),
+        ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
     return stmt;
   }
 
@@ -60,7 +148,9 @@ public final class StreamedSQL {
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
    */
-  public static <T> Stream<T> stream(Connection conn, String query, ResultSetMapper<T> mapper) throws SQLException {
+  public <T> Stream<T> stream(final Connection conn, final String query, final ResultSetMapper<T> mapper)
+      throws SQLException {
+    Objects.requireNonNull(conn, "conn");
     return stream(prepareStatement(conn, query), mapper);
   }
 
@@ -82,21 +172,22 @@ public final class StreamedSQL {
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
    */
-  public static <T> Stream<T> stream(PreparedStatement stmt, ResultSetMapper<T> mapper) throws SQLException {
-    final ResultSet rs = stmt.executeQuery();
+  public <T> Stream<T> stream(final PreparedStatement stmt, final ResultSetMapper<T> mapper) throws SQLException {
+    Objects.requireNonNull(mapper, "mapper");
+    final ResultSet rs = Objects.requireNonNull(stmt, "stmt").executeQuery();
     try {
-      long size;
+      long size; // row count of stmt
       synchronized (rs) {
         try {
           rs.last();
           size = rs.getRow();
           rs.beforeFirst();
         } catch (Exception ex) {
-          size = Long.MAX_VALUE;
+          size = Long.MAX_VALUE; // row count is unknown
         }
       }
-      Stream<T> stream = StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), true);
-      stream.onClose(() -> {
+      final Stream<T> stream = StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), true);
+      final Runnable action = () -> {
         try {
           synchronized (rs) {
             stmt.close();
@@ -104,7 +195,10 @@ public final class StreamedSQL {
         } catch (SQLException e) {
           throw new StreamedSQLException(e);
         }
-      });
+      };
+      stream.onClose(action); // proper close by try-with-resource
+      if (autoClose)
+        getCleaner().register(stream, action); // fallback after gc
       return stream;
     } catch (Exception e) {
       try {

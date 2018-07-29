@@ -27,7 +27,7 @@ final class ResultSetSpliterator<T> extends Spliterators.AbstractSpliterator<T> 
    * @param mapper
    *          used to generate objects from database rows
    */
-  ResultSetSpliterator(ResultSet rs, long size, ResultSetMapper<T> mapper) {
+  ResultSetSpliterator(final ResultSet rs, final long size, final ResultSetMapper<T> mapper) {
     super(size, ResultSetSpliterator.ORDERED | (size < Long.MAX_VALUE ? ResultSetSpliterator.SIZED : 0));
     if (size < 0)
       throw new IllegalArgumentException("size must be positive. Use Long.MAX_VALUE if unknown.");
@@ -36,7 +36,7 @@ final class ResultSetSpliterator<T> extends Spliterators.AbstractSpliterator<T> 
   }
 
   @Override
-  public boolean tryAdvance(Consumer<? super T> action) {
+  public boolean tryAdvance(final Consumer<? super T> action) {
     synchronized (this.rs) {
       try {
         if (!rs.next())

@@ -1,5 +1,6 @@
 package ch.claude_martin.streamdsql;
 
+import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -8,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Random;
 import java.util.stream.Stream;
 
 /**
@@ -24,18 +26,20 @@ import java.util.stream.Stream;
  */
 public class Example {
   public static void main(String[] args) throws SQLException, InterruptedException {
-    var conn = initDB();
-    try (Stream<Foo> stream = StreamedSQL.stream(conn, "SELECT * FROM FOO WHERE NAME LIKE 'L%'", Foo::of)) {
+    final var conn = initDB();
+    final var strsql = StreamedSQL.create();
+    try (Stream<Foo> stream = strsql.stream(conn, "SELECT * FROM FOO WHERE NAME LIKE 'L%'", Foo::of)) {
       stream.filter(f -> f.getId() % 31 == 6).sorted(Comparator.comparing(Foo::getName)).forEach(System.out::println);
     }
     System.out.println("THE END");
   }
 
-  /** Object representation of the Data. */
+  /** Object representation of the data in table <i>FOO</i>. */
   public static class Foo {
     private final int id;
     private final String name;
 
+    /** Man a {@link ResultSet} to {@link Foo}. */
     public static Foo of(ResultSet rs) throws SQLException {
       return new Foo(rs.getInt(1), rs.getString(2));
     }
@@ -59,6 +63,7 @@ public class Example {
     }
   }
 
+  /** Creates and populates a database. */
   private static Connection initDB() throws SQLException {
     try {
       Class.forName("org.apache.derby.jdbc.EmbeddedDriver");
@@ -74,17 +79,17 @@ public class Example {
       ps.execute();
     }
 
-    // Generate some silly names:
-    final int[] cons = "qwrtzpsdfghjklxbnm".chars().toArray();
-    final int[] voc = "euioa".chars().toArray();
-    final StringBuilder sb = new StringBuilder();
-    for (int c : cons) {
+    // Generate some silly and random names:
+    final var cons = rnd("qwrtzpsdfghjklxbnm");
+    final var voc = rnd("euioa");
+    final var sb = new StringBuilder();
+    for (var c : cons) {
       sb.append(Character.toUpperCase((char) c));
-      for (int v : voc) {
+      for (var v : voc) {
         sb.append((char) v);
-        for (int c2 : cons) {
+        for (var c2 : cons) {
           sb.append((char) c2);
-          for (int v2 : voc) {
+          for (var v2 : voc) {
             sb.append((char) v2);
             ps.setString(1, sb.toString());
             ps.execute();
@@ -97,5 +102,10 @@ public class Example {
       sb.setLength(sb.length() - 1);
     }
     return conn;
+  }
+
+  private static int[] rnd(String str) {
+    final Random r = new SecureRandom();
+    return str.chars().mapToObj(c -> c).sorted((a, b) -> r.nextInt(3) - 1).mapToInt(i -> i).toArray();
   }
 }
