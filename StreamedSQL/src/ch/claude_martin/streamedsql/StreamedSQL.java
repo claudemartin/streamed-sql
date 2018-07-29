@@ -1,4 +1,4 @@
-package ch.claude_martin.streamdsql;
+package ch.claude_martin.streamedsql;
 
 import java.lang.ref.Cleaner;
 import java.sql.Connection;

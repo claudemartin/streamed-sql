@@ -1,4 +1,4 @@
-package ch.claude_martin.streamdsql;
+package ch.claude_martin.streamedsql;
 
 /** Checked exceptions that occur during streaming. */
 public class StreamedSQLException extends RuntimeException {
