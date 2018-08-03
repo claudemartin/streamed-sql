@@ -15,9 +15,11 @@ import java.util.stream.Stream;
 /**
  * This is just a silly demonstration.
  * 
+ * <p>
  * This might seem slow, but that's mostly the creation of the in-memory
  * database.
  * 
+ * <p>
  * Note: You must add <a href="https://db.apache.org/derby/">Derby</a> to the
  * class/module path for this to work.
  * 
@@ -27,9 +29,9 @@ import java.util.stream.Stream;
 public class Example {
   public static void main(String[] args) throws SQLException, InterruptedException {
     final var conn = initDB();
-    final var strsql = StreamedSQL.create(conn, false);
+    final var strsql = StreamedSQL.create(conn, true, false);
     try (Stream<Foo> stream = strsql.stream("SELECT * FROM FOO WHERE NAME LIKE 'L%'", Foo::of)) {
-      stream.filter(f -> f.getId() % 31 == 6).sorted(Comparator.comparing(Foo::getName)).forEach(System.out::println);
+      stream.filter(f -> f.getId() % 31 == 6).sorted(Comparator.comparing(Foo::getName)).sequential().forEach(System.out::println);
     }
     System.out.println("THE END");
   }
@@ -39,7 +41,7 @@ public class Example {
     private final int id;
     private final String name;
 
-    /** Man a {@link ResultSet} to {@link Foo}. */
+    /** Maps a {@link ResultSet} to {@link Foo}. */
     public static Foo of(ResultSet rs) throws SQLException {
       return new Foo(rs.getInt(1), rs.getString(2));
     }

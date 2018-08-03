@@ -6,6 +6,11 @@ import java.util.function.*;
 /**
  * Maps a ResultSet to some Object. it behaves just like a {@link Function}, but
  * it can throw an {@link SQLException}.
+ * 
+ * The implementation should not have any side effects and it must not share the
+ * reference to the {@link ResultSet} with other code, since it will be reused
+ * to read the next row of data. The returned object must be thread-safe because
+ * the stream is parallel by default.
  */
 public interface ResultSetMapper<T> {
   /** Map a result set to some Object. */

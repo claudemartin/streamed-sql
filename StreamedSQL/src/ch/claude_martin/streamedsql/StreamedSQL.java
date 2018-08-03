@@ -42,9 +42,12 @@ public final class StreamedSQL {
    * Default connection.
    */
   private final Optional<Connection> defConn;
+  /** Parallel streams by default? */
+  private final boolean defParallel;
 
-  private StreamedSQL(final Connection conn, final boolean autoClose) {
+  private StreamedSQL(final Connection conn, final boolean parallel, final boolean autoClose) {
     this.defConn = Optional.ofNullable(conn);
+    this.defParallel = parallel;
     this.autoClose = autoClose;
   }
 
@@ -58,7 +61,7 @@ public final class StreamedSQL {
    * @return a new {@link StreamedSQL}
    */
   public static StreamedSQL create() {
-    return new StreamedSQL(null, false);
+    return new StreamedSQL(null, true, false);
   }
 
   /**
@@ -68,12 +71,14 @@ public final class StreamedSQL {
    * 
    * @param conn
    *          default connection (can be null)
+   * @param parallel
+   *          should the created streams be parallel by default?
    * @param autoClose
    *          should phantom references be closed automatically?
    * @return a new {@link StreamedSQL}
    */
-  public static StreamedSQL create(final Connection conn, final boolean autoClose) {
-    return new StreamedSQL(conn, autoClose);
+  public static StreamedSQL create(final Connection conn, final boolean parallel, final boolean autoClose) {
+    return new StreamedSQL(conn, parallel, autoClose);
   }
 
   /**
@@ -140,7 +145,7 @@ public final class StreamedSQL {
    *           if the default connection is not set
    */
   public PreparedStatement prepareStatement(final String query) throws SQLException, IllegalStateException {
-    return prepareStatement(this.defConn.orElseThrow(() -> new IllegalStateException()), query);
+    return prepareStatement(this.getDefConn(), query);
   }
 
   /**
@@ -166,7 +171,7 @@ public final class StreamedSQL {
   public <T> Stream<T> stream(final Connection conn, final String query, final ResultSetMapper<T> mapper)
       throws SQLException {
     Objects.requireNonNull(conn, "conn");
-    return stream(prepareStatement(conn, query), mapper);
+    return stream(prepareStatement(conn, query), mapper, this.defParallel);
   }
 
   /**
@@ -184,13 +189,13 @@ public final class StreamedSQL {
    *          the query statement
    * @param mapper
    *          maps the {@link ResultSet} to some object
-   * @return a parallel stream
+   * @return a stream
    * @throws SQLException
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
    */
   public <T> Stream<T> stream(final String query, final ResultSetMapper<T> mapper) throws SQLException {
-    return stream(prepareStatement(query), mapper);
+    return stream(prepareStatement(query), mapper, this.defParallel);
   }
 
   /**
@@ -206,12 +211,16 @@ public final class StreamedSQL {
    *          the prepared statement
    * @param mapper
    *          maps the {@link ResultSet} to some object
-   * @return a parallel stream
+   * @param parallel
+   *          if {@code true} then the returned stream is a parallel, else it is
+   *          sequential.
+   * @return a stream
    * @throws SQLException
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
    */
-  public <T> Stream<T> stream(final PreparedStatement stmt, final ResultSetMapper<T> mapper) throws SQLException {
+  public <T> Stream<T> stream(final PreparedStatement stmt, final ResultSetMapper<T> mapper, final boolean parallel)
+      throws SQLException {
     Objects.requireNonNull(mapper, "mapper");
     final ResultSet rs = Objects.requireNonNull(stmt, "stmt").executeQuery();
     try {
@@ -225,7 +234,7 @@ public final class StreamedSQL {
           size = Long.MAX_VALUE; // row count is unknown
         }
       }
-      final Stream<T> stream = StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), true);
+      final Stream<T> stream = StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), parallel);
       final Runnable action = () -> {
         try {
           synchronized (rs) {
@@ -239,10 +248,10 @@ public final class StreamedSQL {
       if (autoClose)
         getCleaner().register(stream, action); // fallback after gc
       return stream;
-    } catch (Exception e) {
+    } catch (Throwable e) {
       try {
         stmt.close();
-      } catch (SQLException e2) {
+      } catch (Throwable e2) {
         e.addSuppressed(e);
       }
       throw e;

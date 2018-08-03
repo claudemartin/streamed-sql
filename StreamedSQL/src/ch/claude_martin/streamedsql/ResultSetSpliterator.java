@@ -37,16 +37,13 @@ final class ResultSetSpliterator<T> extends Spliterators.AbstractSpliterator<T> 
 
   @Override
   public boolean tryAdvance(final Consumer<? super T> action) {
-    synchronized (this.rs) {
-      try {
-        if (!rs.next())
-          return false;
-        action.accept(mapper.map(rs));
-        return true;
-      } catch (SQLException e) {
-        throw new StreamedSQLException(e);
-      }
+    try {
+      if (!rs.next())
+        return false;
+      action.accept(mapper.map(rs));
+      return true;
+    } catch (SQLException e) {
+      throw new StreamedSQLException(e);
     }
   }
-
 }
