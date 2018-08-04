@@ -1,6 +1,5 @@
 package ch.claude_martin.streamedsql;
 
-import java.lang.ref.Cleaner;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -21,34 +20,21 @@ import java.util.stream.StreamSupport;
  * 
  * <p>
  * Always use <code>try-with-resource</code>, so the resources get closed as
- * soon as possible. If you prefer to be sloppy you should at least call
- * {@link #getAutoClosePhantoms()} before creating any streams.
+ * soon as possible. When passing a statement you have to close that. When
+ * passing a query string you have to close the stream itself.
  * 
  * @author Claude Martin
  *
  */
 public final class StreamedSQL {
-  /**
-   * The cleaner used for auto-closed statemens.
-   * <p>
-   * All use the same Cleaner. But nut every instance of {@link StreamedSQL} has
-   * this feature enabled. It's a singleton that is created the first time one is
-   * used.
-   */
-  private static volatile Cleaner cleaner = null;
-
-  private final boolean autoClose;
-  /**
-   * Default connection.
-   */
+  /** Default connection. */
   private final Optional<Connection> defConn;
   /** Parallel streams by default? */
   private final boolean defParallel;
 
-  private StreamedSQL(final Connection conn, final boolean parallel, final boolean autoClose) {
+  private StreamedSQL(final Connection conn, final boolean parallel) {
     this.defConn = Optional.ofNullable(conn);
     this.defParallel = parallel;
-    this.autoClose = autoClose;
   }
 
   private Connection getDefConn() {
@@ -61,50 +47,21 @@ public final class StreamedSQL {
    * @return a new {@link StreamedSQL}
    */
   public static StreamedSQL create() {
-    return new StreamedSQL(null, true, false);
+    return new StreamedSQL(null, true);
   }
 
   /**
-   * Returns a new {@link StreamedSQL} with a given default connection (could be
-   * null) and {@link #setAutoClosePhantoms(boolean) auto-close} enabled or
-   * disabled.
+   * Returns a new {@link StreamedSQL} with a given default connection (which
+   * could be <code>null</code>).
    * 
    * @param conn
-   *          default connection (can be null)
+   *          default connection (can be <code>null</code>)
    * @param parallel
    *          should the created streams be parallel by default?
-   * @param autoClose
-   *          should phantom references be closed automatically?
    * @return a new {@link StreamedSQL}
    */
-  public static StreamedSQL create(final Connection conn, final boolean parallel, final boolean autoClose) {
-    return new StreamedSQL(conn, parallel, autoClose);
-  }
-
-  /**
-   * You can enable this at creation, so that streams created in this class will
-   * automatically close, even when <code>try-with-resource</code> is not used.
-   * 
-   * <p>
-   * Note that it is recommended to properly close all streams using
-   * <code>try-with-resource</code>.
-   * 
-   * <p>
-   * If set to <code>true</code>, all phantom reachable streams will be closed,
-   * which also closes the used sql statement.
-   */
-  public boolean getAutoClosePhantoms() {
-    return autoClose;
-  }
-
-  /** Returns the singleton {@link Cleaner}. Creates it if necessary. */
-  private static Cleaner getCleaner() {
-    if (cleaner == null) // cleaner is volatile, so this actually works.
-      synchronized (StreamedSQL.class) {
-        if (cleaner == null)
-          return cleaner = Cleaner.create();
-      }
-    return cleaner;
+  public static StreamedSQL create(final Connection conn, final boolean parallel) {
+    return new StreamedSQL(conn, parallel);
   }
 
   /**
@@ -116,8 +73,9 @@ public final class StreamedSQL {
    * not be opened yet.
    * 
    * <p>
-   * Not that can just use {@link #stream(Connection, String, ResultSetMapper)}
-   * directly, which will create a statement for you.
+   * Note that you can just use
+   * {@link #stream(Connection, String, ResultSetMapper)} directly, which will
+   * create a statement for you.
    * 
    * @param conn
    *          the connection
@@ -163,7 +121,7 @@ public final class StreamedSQL {
    *          the query statement
    * @param mapper
    *          maps the {@link ResultSet} to some object
-   * @return a parallel stream
+   * @return a parallel stream, which has to be closed
    * @throws SQLException
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
@@ -171,7 +129,18 @@ public final class StreamedSQL {
   public <T> Stream<T> stream(final Connection conn, final String query, final ResultSetMapper<T> mapper)
       throws SQLException {
     Objects.requireNonNull(conn, "conn");
-    return stream(prepareStatement(conn, query), mapper, this.defParallel);
+    Objects.requireNonNull(query, "query");
+    Objects.requireNonNull(mapper, "mapper");
+    final PreparedStatement stmt = prepareStatement(conn, query);
+    final Stream<T> stream = stream(stmt, mapper, this.defParallel);
+    stream.onClose(() -> {
+      try {
+        stmt.close();
+      } catch (SQLException e) {
+        throw new StreamedSQLException(e);
+      }
+    }); // proper close by try-with-resource
+    return stream;
   }
 
   /**
@@ -189,13 +158,13 @@ public final class StreamedSQL {
    *          the query statement
    * @param mapper
    *          maps the {@link ResultSet} to some object
-   * @return a stream
+   * @return a stream, which has to be closed
    * @throws SQLException
    *           Thrown when the <i>query</i> can't be executed. Consider handling
    *           {@link StreamedSQLException} as well.
    */
   public <T> Stream<T> stream(final String query, final ResultSetMapper<T> mapper) throws SQLException {
-    return stream(prepareStatement(query), mapper, this.defParallel);
+    return stream(this.getDefConn(), query, mapper);
   }
 
   /**
@@ -204,8 +173,9 @@ public final class StreamedSQL {
    * <code>conn.prepareStatement(query, ResultSet.<b>TYPE_SCROLL_INSENSITIVE</b>, ResultSet.<b>CONCUR_READ_ONLY</b>);</code>.
    * 
    * <p>
-   * Note that the stream has to be closed. Use <code>try-with-resource</code> to
-   * make sure the stream does not remain open.
+   * Note that the statement needs to be closed by the calling side. Use
+   * <code>try-with-resource</code> to make sure the statement is always properly
+   * closed. The stream returned here does not need to be closed.
    * 
    * @param stmt
    *          the prepared statement
@@ -220,41 +190,19 @@ public final class StreamedSQL {
    *           {@link StreamedSQLException} as well.
    */
   public <T> Stream<T> stream(final PreparedStatement stmt, final ResultSetMapper<T> mapper, final boolean parallel)
-      throws SQLException {
+      throws SQLException, StreamedSQLException {
     Objects.requireNonNull(mapper, "mapper");
+    // This result set is never closed, but the caller has to close the statement,
+    // which will do the job.
     final ResultSet rs = Objects.requireNonNull(stmt, "stmt").executeQuery();
+    long size; // row count of stmt
     try {
-      long size; // row count of stmt
-      synchronized (rs) {
-        try {
-          rs.last();
-          size = rs.getRow();
-          rs.beforeFirst();
-        } catch (Exception ex) {
-          size = Long.MAX_VALUE; // row count is unknown
-        }
-      }
-      final Stream<T> stream = StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), parallel);
-      final Runnable action = () -> {
-        try {
-          synchronized (rs) {
-            stmt.close();
-          }
-        } catch (SQLException e) {
-          throw new StreamedSQLException(e);
-        }
-      };
-      stream.onClose(action); // proper close by try-with-resource
-      if (autoClose)
-        getCleaner().register(stream, action); // fallback after gc
-      return stream;
-    } catch (Throwable e) {
-      try {
-        stmt.close();
-      } catch (Throwable e2) {
-        e.addSuppressed(e);
-      }
-      throw e;
+      rs.last();
+      size = rs.getRow();
+      rs.beforeFirst();
+    } catch (Exception ex) {
+      size = Long.MAX_VALUE; // row count is unknown
     }
+    return StreamSupport.stream(new ResultSetSpliterator<T>(rs, size, mapper), parallel);
   }
 }

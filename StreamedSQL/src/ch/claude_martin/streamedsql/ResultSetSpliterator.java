@@ -30,7 +30,7 @@ final class ResultSetSpliterator<T> extends Spliterators.AbstractSpliterator<T> 
   ResultSetSpliterator(final ResultSet rs, final long size, final ResultSetMapper<T> mapper) {
     super(size, ResultSetSpliterator.ORDERED | (size < Long.MAX_VALUE ? ResultSetSpliterator.SIZED : 0));
     if (size < 0)
-      throw new IllegalArgumentException("size must be positive. Use Long.MAX_VALUE if unknown.");
+      throw new IllegalArgumentException("Size must be positive. Use 'Long.MAX_VALUE' if unknown.");
     this.rs = Objects.requireNonNull(rs);
     this.mapper = Objects.requireNonNull(mapper);
   }
