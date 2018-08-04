@@ -5,9 +5,9 @@ It's very easy to use:
 
 ```JAVA
 Connection conn = dbpool.getConnection();
-final var strsql = StreamedSQL.create(conn, true); 
+var strsql = StreamedSQL.create(conn, true); 
 try (Stream<Foo> stream = strsql.stream("SELECT * FROM FOO", Foo::new)) {
-  stream.filter(f -> f.getName().startsWith("L")).sorted().forEach(System.out::println);
+  stream.filter(f -> f.getName().startsWith("L")).sorted().forEachOrdered(System.out::println);
 }
 ```
 
